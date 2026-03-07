@@ -1,4 +1,5 @@
 import argparse
+import inspect
 import json
 import os
 import shutil
@@ -171,6 +172,175 @@ def close_contexts(quote_ctx, trade_ctx):
         trade_ctx.close()
 
 
+def find_quote_handler(quote_ctx, names):
+    for name in names:
+        if hasattr(quote_ctx, name):
+            return getattr(quote_ctx, name)
+    return None
+
+
+def find_trade_handler(trade_ctx, names):
+    for name in names:
+        if hasattr(trade_ctx, name):
+            return getattr(trade_ctx, name)
+    return None
+
+
+def build_signature_params(handler, param_groups):
+    signature = None
+    try:
+        signature = inspect.signature(handler)
+    except (TypeError, ValueError):
+        signature = None
+    params = {}
+    if signature:
+        for names, value in param_groups:
+            if value is None:
+                continue
+            for name in names:
+                if name in signature.parameters:
+                    params[name] = value
+                    break
+    return signature, params
+
+
+def call_ctx_method(handler, param_groups, fallback_args):
+    signature, params = build_signature_params(handler, param_groups)
+    if signature:
+        if params:
+            return handler(**params)
+        ordered_args = []
+        for param in signature.parameters.values():
+            if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+                continue
+            value = None
+            for names, candidate in param_groups:
+                if candidate is None:
+                    continue
+                if param.name in names:
+                    value = candidate
+                    break
+            if value is None:
+                if param.default is inspect._empty:
+                    ordered_args = []
+                    break
+                continue
+            ordered_args.append(value)
+        if ordered_args:
+            return handler(*ordered_args)
+        return handler(*fallback_args)
+    return handler(*fallback_args)
+
+
+def normalize_period(period):
+    if not period:
+        return None
+    mapping = {
+        "Q": "QUARTER",
+        "QUARTERLY": "QUARTER",
+        "QUARTER": "QUARTER",
+        "H": "HALF",
+        "HALF": "HALF",
+        "HALF_YEAR": "HALF",
+        "HALFYEAR": "HALF",
+        "SEMI": "HALF",
+        "SEMIANNUAL": "HALF",
+        "SEMI_ANNUAL": "HALF",
+        "Y": "YEAR",
+        "YEAR": "YEAR",
+        "YEARLY": "YEAR",
+        "ANNUAL": "YEAR",
+        "FY": "YEAR",
+    }
+    upper = period.upper()
+    return mapping.get(upper, upper)
+
+
+def resolve_enum_value(value_name, enum_names, candidates):
+    try:
+        import futu
+    except Exception:
+        return None
+    for enum_name in enum_names:
+        enum_cls = getattr(futu, enum_name, None)
+        if enum_cls is None:
+            continue
+        for candidate in candidates:
+            if hasattr(enum_cls, candidate):
+                return getattr(enum_cls, candidate)
+    return None
+
+
+def build_financial_params(handler, args, extra_params):
+    params = {}
+    signature = None
+    try:
+        signature = inspect.signature(handler)
+    except (TypeError, ValueError):
+        signature = None
+    if signature:
+        if "code" in signature.parameters:
+            params["code"] = args.code
+        elif "code_list" in signature.parameters:
+            params["code_list"] = [args.code]
+        if "start" in signature.parameters and args.start:
+            params["start"] = args.start
+        if "end" in signature.parameters and args.end:
+            params["end"] = args.end
+        period_value = extra_params.get("period")
+        if period_value is not None:
+            if "period" in signature.parameters:
+                params["period"] = period_value
+            if "report_period" in signature.parameters:
+                params["report_period"] = period_value
+            if "period_type" in signature.parameters:
+                params["period_type"] = period_value
+        report_type_value = extra_params.get("report_type")
+        if report_type_value is not None:
+            if "report_type" in signature.parameters:
+                params["report_type"] = report_type_value
+            if "type" in signature.parameters:
+                params["type"] = report_type_value
+        statement_value = extra_params.get("statement_type")
+        if statement_value is not None:
+            if "statement_type" in signature.parameters:
+                params["statement_type"] = statement_value
+            if "sheet_type" in signature.parameters:
+                params["sheet_type"] = statement_value
+    return signature, params
+
+
+def call_financial_api(quote_ctx, handler_names, args, extra_params, error_message):
+    handler = find_quote_handler(quote_ctx, handler_names)
+    if handler is None:
+        json_out(
+            {
+                "ok": False,
+                "error": error_message,
+                "next_steps": [
+                    "确认 futu-api 版本是否支持该接口",
+                    "如需接入其他数据源，请提供接口要求",
+                ],
+            },
+            1,
+        )
+    signature, params = build_financial_params(handler, args, extra_params)
+    if signature:
+        if params:
+            result = handler(**params)
+        else:
+            result = handler(args.code)
+    else:
+        result = handler(args.code)
+    if not isinstance(result, tuple) or len(result) < 2:
+        json_out({"ok": False, "error": "财务接口返回格式不符合预期"}, 1)
+    ret, data = result[0], result[1]
+    if ret != 0:
+        json_out({"ok": False, "error": str(data)}, 1)
+    payload = data.to_dict("records") if hasattr(data, "to_dict") else data
+    json_out({"ok": True, "data": payload})
+
+
 def cmd_quote(args):
     host = get_env("FUTU_HOST", "127.0.0.1")
     port = int(get_env("FUTU_PORT", "11111"))
@@ -180,15 +350,31 @@ def cmd_quote(args):
     try:
         from futu import SubType
 
-        ret, data = quote_ctx.subscribe(
-            symbols,
-            [SubType.QUOTE],
-            is_first_push=False,
-            subscribe_push=False,
+        handler = find_quote_handler(quote_ctx, ("subscribe",))
+        if handler is None:
+            json_out({"ok": False, "error": "当前 futu-api 未提供行情订阅接口"}, 1)
+        result = call_ctx_method(
+            handler,
+            [
+                (["code_list", "security_list", "securities", "symbol_list"], symbols),
+                (["subtype_list", "sub_type_list", "sub_type", "sub_types"], [SubType.QUOTE]),
+                (["is_first_push"], False),
+                (["subscribe_push"], False),
+            ],
+            [symbols, [SubType.QUOTE], False, False],
         )
+        ret, data = result
         if ret != 0:
             json_out({"ok": False, "error": str(data)}, 1)
-        ret, data = quote_ctx.get_stock_quote(symbols)
+        handler = find_quote_handler(quote_ctx, ("get_stock_quote",))
+        if handler is None:
+            json_out({"ok": False, "error": "当前 futu-api 未提供行情查询接口"}, 1)
+        result = call_ctx_method(
+            handler,
+            [(["code_list", "codes", "code", "symbols"], symbols)],
+            [symbols],
+        )
+        ret, data = result
         if ret != 0:
             json_out({"ok": False, "error": str(data)}, 1)
         json_out({"ok": True, "data": data.to_dict("records")})
@@ -203,10 +389,224 @@ def cmd_positions(args):
     trd_market = parse_trd_market(get_env("FUTU_TRD_MARKET", "HK"))
     quote_ctx, trade_ctx = open_contexts(host, port, trd_market)
     try:
-        ret, data = trade_ctx.position_list_query(trd_env=trd_env, position_market=trd_market)
+        handler = find_trade_handler(trade_ctx, ("position_list_query",))
+        if handler is None:
+            json_out({"ok": False, "error": "当前 futu-api 未提供持仓查询接口"}, 1)
+        result = call_ctx_method(
+            handler,
+            [
+                (["trd_env"], trd_env),
+                (["position_market", "trd_market", "order_market", "deal_market"], trd_market),
+            ],
+            [trd_env, trd_market],
+        )
+        ret, data = result
         if ret != 0:
             json_out({"ok": False, "error": str(data)}, 1)
         json_out({"ok": True, "data": data.to_dict("records")})
+    finally:
+        close_contexts(quote_ctx, trade_ctx)
+
+
+def cmd_historical_kline(args):
+    host = get_env("FUTU_HOST", "127.0.0.1")
+    port = int(get_env("FUTU_PORT", "11111"))
+    trd_market = parse_trd_market(get_env("FUTU_TRD_MARKET", "HK"))
+    quote_ctx, trade_ctx = open_contexts(host, port, trd_market)
+    try:
+        from futu import KLType, AuType
+
+        ktype_name = args.ktype.upper()
+        ktype_map = {
+            "DAY": KLType.K_DAY,
+            "WEEK": KLType.K_WEEK,
+            "MONTH": KLType.K_MON,
+            "1M": KLType.K_1M,
+            "5M": KLType.K_5M,
+            "15M": KLType.K_15M,
+            "30M": KLType.K_30M,
+            "60M": KLType.K_60M,
+        }
+        ktype = ktype_map.get(ktype_name)
+        if ktype is None:
+            json_out({"ok": False, "error": "无效的 K 线周期"}, 1)
+        autype_name = args.autype.upper()
+        if not hasattr(AuType, autype_name):
+            json_out({"ok": False, "error": "无效的复权类型"}, 1)
+        handler = find_quote_handler(quote_ctx, ("request_history_kline",))
+        if handler is None:
+            json_out({"ok": False, "error": "当前 futu-api 未提供历史 K 线接口"}, 1)
+        result = call_ctx_method(
+            handler,
+            [
+                (["code", "symbol", "stock_code", "security"], args.code),
+                (["start", "start_time", "start_date"], args.start),
+                (["end", "end_time", "end_date"], args.end),
+                (["ktype", "kl_type", "k_type"], ktype),
+                (["autype", "au_type", "rehab_type"], getattr(AuType, autype_name)),
+                (["max_count", "count"], int(args.max_count)),
+                (["page_req_key"], args.page_req_key or None),
+            ],
+            [
+                args.code,
+                args.start,
+                args.end,
+                ktype,
+                getattr(AuType, autype_name),
+                int(args.max_count),
+                args.page_req_key or None,
+            ],
+        )
+        if not isinstance(result, tuple) or len(result) < 2:
+            json_out({"ok": False, "error": "历史 K 线接口返回格式不符合预期"}, 1)
+        ret, data = result[0], result[1]
+        page_req_key = result[2] if len(result) > 2 else None
+        if ret != 0:
+            json_out({"ok": False, "error": str(data)}, 1)
+        json_out({"ok": True, "data": data.to_dict("records"), "page_req_key": page_req_key})
+    finally:
+        close_contexts(quote_ctx, trade_ctx)
+
+
+def cmd_financial_report(args):
+    host = get_env("FUTU_HOST", "127.0.0.1")
+    port = int(get_env("FUTU_PORT", "11111"))
+    trd_market = parse_trd_market(get_env("FUTU_TRD_MARKET", "HK"))
+    quote_ctx, trade_ctx = open_contexts(host, port, trd_market)
+    try:
+        call_financial_api(
+            quote_ctx,
+            ("get_financial_report", "request_financial_report"),
+            args,
+            {"period": None, "report_type": None, "statement_type": None},
+            "当前 futu-api 未提供财务报表接口",
+        )
+    finally:
+        close_contexts(quote_ctx, trade_ctx)
+
+
+def resolve_period_value(period):
+    normalized = normalize_period(period)
+    if not normalized:
+        return None
+    if normalized not in {"QUARTER", "HALF", "YEAR"}:
+        json_out({"ok": False, "error": "无效的报表周期"}, 1)
+    candidates = {
+        "QUARTER": ["QUARTER", "QUARTERLY", "REPORT_QUARTER", "SEASON"],
+        "HALF": ["HALF", "HALF_YEAR", "HALFYEAR", "SEMI", "SEMIANNUAL", "SEMI_ANNUAL"],
+        "YEAR": ["YEAR", "ANNUAL", "FULL_YEAR", "FY", "YEARLY"],
+    }
+    enum_value = resolve_enum_value(
+        normalized,
+        ["FinancialPeriod", "FinancialReportPeriod", "ReportPeriod", "PeriodType", "FinancialPeriodType"],
+        candidates.get(normalized, [normalized]),
+    )
+    return enum_value if enum_value is not None else normalized
+
+
+def resolve_statement_value(statement):
+    candidates = {
+        "BALANCE": ["BALANCE_SHEET", "BALANCE", "BS"],
+        "INCOME": ["INCOME_STATEMENT", "INCOME", "PROFIT", "P_L", "PL"],
+        "CASHFLOW": ["CASH_FLOW", "CASHFLOW", "CASH_FLOW_STATEMENT", "CF"],
+    }
+    enum_value = resolve_enum_value(
+        statement,
+        ["FinancialStatementType", "StatementType", "FinancialReportType", "ReportType"],
+        candidates.get(statement, [statement]),
+    )
+    return enum_value if enum_value is not None else statement
+
+
+def resolve_indicator_value():
+    enum_value = resolve_enum_value(
+        "INDICATOR",
+        ["FinancialReportType", "ReportType", "FinancialDataType", "FinancialType"],
+        [
+            "FINANCIAL_DATA",
+            "FINANCIAL_SUMMARY",
+            "BASIC_FINANCIAL",
+            "FINANCIAL_RATIO",
+            "FINANCIAL_INDICATOR",
+            "INDICATOR",
+            "FINANCIAL_METRIC",
+        ],
+    )
+    return enum_value
+
+
+def cmd_financial_indicators(args):
+    host = get_env("FUTU_HOST", "127.0.0.1")
+    port = int(get_env("FUTU_PORT", "11111"))
+    trd_market = parse_trd_market(get_env("FUTU_TRD_MARKET", "HK"))
+    quote_ctx, trade_ctx = open_contexts(host, port, trd_market)
+    try:
+        period_value = resolve_period_value(args.period)
+        report_type_value = resolve_indicator_value()
+        call_financial_api(
+            quote_ctx,
+            ("get_financial", "get_financial_data", "get_financial_summary", "get_stock_financial"),
+            args,
+            {"period": period_value, "report_type": report_type_value, "statement_type": None},
+            "当前 futu-api 未提供财务指标接口",
+        )
+    finally:
+        close_contexts(quote_ctx, trade_ctx)
+
+
+def cmd_financial_balance(args):
+    host = get_env("FUTU_HOST", "127.0.0.1")
+    port = int(get_env("FUTU_PORT", "11111"))
+    trd_market = parse_trd_market(get_env("FUTU_TRD_MARKET", "HK"))
+    quote_ctx, trade_ctx = open_contexts(host, port, trd_market)
+    try:
+        period_value = resolve_period_value(args.period)
+        statement_value = resolve_statement_value("BALANCE")
+        call_financial_api(
+            quote_ctx,
+            ("get_financial_report", "request_financial_report", "get_financial_statement"),
+            args,
+            {"period": period_value, "report_type": statement_value, "statement_type": statement_value},
+            "当前 futu-api 未提供资产负债表接口",
+        )
+    finally:
+        close_contexts(quote_ctx, trade_ctx)
+
+
+def cmd_financial_income(args):
+    host = get_env("FUTU_HOST", "127.0.0.1")
+    port = int(get_env("FUTU_PORT", "11111"))
+    trd_market = parse_trd_market(get_env("FUTU_TRD_MARKET", "HK"))
+    quote_ctx, trade_ctx = open_contexts(host, port, trd_market)
+    try:
+        period_value = resolve_period_value(args.period)
+        statement_value = resolve_statement_value("INCOME")
+        call_financial_api(
+            quote_ctx,
+            ("get_financial_report", "request_financial_report", "get_financial_statement"),
+            args,
+            {"period": period_value, "report_type": statement_value, "statement_type": statement_value},
+            "当前 futu-api 未提供利润表接口",
+        )
+    finally:
+        close_contexts(quote_ctx, trade_ctx)
+
+
+def cmd_financial_cashflow(args):
+    host = get_env("FUTU_HOST", "127.0.0.1")
+    port = int(get_env("FUTU_PORT", "11111"))
+    trd_market = parse_trd_market(get_env("FUTU_TRD_MARKET", "HK"))
+    quote_ctx, trade_ctx = open_contexts(host, port, trd_market)
+    try:
+        period_value = resolve_period_value(args.period)
+        statement_value = resolve_statement_value("CASHFLOW")
+        call_financial_api(
+            quote_ctx,
+            ("get_financial_report", "request_financial_report", "get_financial_statement"),
+            args,
+            {"period": period_value, "report_type": statement_value, "statement_type": statement_value},
+            "当前 futu-api 未提供现金流量表接口",
+        )
     finally:
         close_contexts(quote_ctx, trade_ctx)
 
@@ -234,11 +634,19 @@ def cmd_today_pnl(args):
             except (TypeError, ValueError):
                 return None
 
-        ret, data = trade_ctx.position_list_query(
-            trd_env=trd_env,
-            position_market=trd_market,
-            refresh_cache=args.refresh_cache,
+        handler = find_trade_handler(trade_ctx, ("position_list_query",))
+        if handler is None:
+            json_out({"ok": False, "error": "当前 futu-api 未提供持仓查询接口"}, 1)
+        result = call_ctx_method(
+            handler,
+            [
+                (["trd_env"], trd_env),
+                (["position_market", "trd_market", "order_market", "deal_market"], trd_market),
+                (["refresh_cache"], args.refresh_cache),
+            ],
+            [trd_env, trd_market, args.refresh_cache],
         )
+        ret, data = result
         if ret != 0:
             json_out({"ok": False, "error": str(data)}, 1)
         records = data.to_dict("records")
@@ -273,7 +681,15 @@ def unlock_trade(trade_ctx):
     password = get_env("FUTU_TRADE_PWD", get_env("FUTU_PASSWORD", ""))
     if not password:
         json_out({"ok": False, "error": "缺少 FUTU_TRADE_PWD"}, 1)
-    ret, data = trade_ctx.unlock_trade(password)
+    handler = find_trade_handler(trade_ctx, ("unlock_trade",))
+    if handler is None:
+        json_out({"ok": False, "error": "当前 futu-api 未提供交易解锁接口"}, 1)
+    result = call_ctx_method(
+        handler,
+        [(["password", "pwd", "unlock_password"], password)],
+        [password],
+    )
+    ret, data = result
     if ret != 0:
         json_out({"ok": False, "error": str(data)}, 1)
 
@@ -295,15 +711,23 @@ def cmd_order(args, side):
             order_type_value = OrderType.MARKET
         else:
             order_type_value = OrderType.NORMAL
-        ret, data = trade_ctx.place_order(
-            price=price,
-            qty=qty,
-            code=symbol,
-            trd_side=TrdSide.BUY if side == "buy" else TrdSide.SELL,
-            order_type=order_type_value,
-            trd_env=trd_env,
-            trd_market=trd_market,
+        handler = find_trade_handler(trade_ctx, ("place_order",))
+        if handler is None:
+            json_out({"ok": False, "error": "当前 futu-api 未提供下单接口"}, 1)
+        result = call_ctx_method(
+            handler,
+            [
+                (["price"], price),
+                (["qty", "quantity"], qty),
+                (["code", "symbol", "stock_code"], symbol),
+                (["trd_side", "side"], TrdSide.BUY if side == "buy" else TrdSide.SELL),
+                (["order_type", "order_type_value", "order_type_enum"], order_type_value),
+                (["trd_env"], trd_env),
+                (["trd_market", "order_market"], trd_market),
+            ],
+            [price, qty, symbol, TrdSide.BUY if side == "buy" else TrdSide.SELL, order_type_value, trd_env, trd_market],
         )
+        ret, data = result
         if ret != 0:
             json_out({"ok": False, "error": str(data)}, 1)
         json_out({"ok": True, "data": data.to_dict("records")})
@@ -331,16 +755,33 @@ def cmd_orders(args):
         json_out({"ok": False, "error": "无效的订单状态"}, 1)
     quote_ctx, trade_ctx = open_contexts(host, port, trd_market)
     try:
-        ret, data = trade_ctx.order_list_query(
-            order_id=args.order_id or "",
-            order_market=trd_market,
-            status_filter_list=status_filter,
-            code=args.symbol or "",
-            start=args.start or "",
-            end=args.end or "",
-            trd_env=trd_env,
-            refresh_cache=args.refresh_cache,
+        handler = find_trade_handler(trade_ctx, ("order_list_query",))
+        if handler is None:
+            json_out({"ok": False, "error": "当前 futu-api 未提供订单查询接口"}, 1)
+        result = call_ctx_method(
+            handler,
+            [
+                (["order_id"], args.order_id or ""),
+                (["order_market", "trd_market"], trd_market),
+                (["status_filter_list", "status_filter"], status_filter),
+                (["code", "symbol", "stock_code"], args.symbol or ""),
+                (["start", "start_time", "start_date"], args.start or ""),
+                (["end", "end_time", "end_date"], args.end or ""),
+                (["trd_env"], trd_env),
+                (["refresh_cache"], args.refresh_cache),
+            ],
+            [
+                args.order_id or "",
+                status_filter,
+                args.symbol or "",
+                args.start or "",
+                args.end or "",
+                trd_env,
+                trd_market,
+                args.refresh_cache,
+            ],
         )
+        ret, data = result
         if ret != 0:
             json_out({"ok": False, "error": str(data)}, 1)
         json_out({"ok": True, "data": data.to_dict("records")})
@@ -357,13 +798,22 @@ def cmd_cancel(args):
     quote_ctx, trade_ctx = open_contexts(host, port, trd_market)
     try:
         unlock_trade(trade_ctx)
-        ret, data = trade_ctx.modify_order(
-            ModifyOrderOp.CANCEL,
-            args.order_id,
-            0,
-            0,
-            trd_env=trd_env,
+        handler = find_trade_handler(trade_ctx, ("modify_order",))
+        if handler is None:
+            json_out({"ok": False, "error": "当前 futu-api 未提供改撤单接口"}, 1)
+        result = call_ctx_method(
+            handler,
+            [
+                (["modify_order_op", "modify_op", "op"], ModifyOrderOp.CANCEL),
+                (["order_id"], args.order_id),
+                (["qty", "quantity"], 0),
+                (["price"], 0),
+                (["trd_env"], trd_env),
+                (["trd_market", "order_market"], trd_market),
+            ],
+            [ModifyOrderOp.CANCEL, args.order_id, 0, 0, trd_env, trd_market],
         )
+        ret, data = result
         if ret != 0:
             json_out({"ok": False, "error": str(data)}, 1)
         json_out({"ok": True, "data": data.to_dict("records")})
@@ -381,12 +831,20 @@ def cmd_fills(args):
     quote_ctx, trade_ctx = open_contexts(host, port, trd_market)
     try:
         if days <= 1:
-            ret, data = trade_ctx.deal_list_query(
-                code=args.symbol or "",
-                deal_market=trd_market,
-                trd_env=trd_env,
-                refresh_cache=args.refresh_cache,
+            handler = find_trade_handler(trade_ctx, ("deal_list_query",))
+            if handler is None:
+                json_out({"ok": False, "error": "当前 futu-api 未提供成交查询接口"}, 1)
+            result = call_ctx_method(
+                handler,
+                [
+                    (["code", "symbol", "stock_code"], args.symbol or ""),
+                    (["deal_market", "trd_market", "order_market"], trd_market),
+                    (["trd_env"], trd_env),
+                    (["refresh_cache"], args.refresh_cache),
+                ],
+                [args.symbol or "", trd_market, trd_env, args.refresh_cache],
             )
+            ret, data = result
         else:
             if trd_env == TrdEnv.SIMULATE:
                 json_out({"ok": False, "error": "纸面交易环境不支持历史成交查询"}, 1)
@@ -394,13 +852,27 @@ def cmd_fills(args):
 
             end_date = datetime.now()
             start_date = end_date - timedelta(days=days - 1)
-            ret, data = trade_ctx.history_deal_list_query(
-                code=args.symbol or "",
-                deal_market=trd_market,
-                start=start_date.strftime("%Y-%m-%d"),
-                end=end_date.strftime("%Y-%m-%d"),
-                trd_env=trd_env,
+            handler = find_trade_handler(trade_ctx, ("history_deal_list_query",))
+            if handler is None:
+                json_out({"ok": False, "error": "当前 futu-api 未提供历史成交接口"}, 1)
+            result = call_ctx_method(
+                handler,
+                [
+                    (["code", "symbol", "stock_code"], args.symbol or ""),
+                    (["deal_market", "trd_market", "order_market"], trd_market),
+                    (["start", "start_time", "start_date"], start_date.strftime("%Y-%m-%d")),
+                    (["end", "end_time", "end_date"], end_date.strftime("%Y-%m-%d")),
+                    (["trd_env"], trd_env),
+                ],
+                [
+                    args.symbol or "",
+                    trd_market,
+                    start_date.strftime("%Y-%m-%d"),
+                    end_date.strftime("%Y-%m-%d"),
+                    trd_env,
+                ],
             )
+            ret, data = result
         if ret != 0:
             json_out({"ok": False, "error": str(data)}, 1)
         json_out({"ok": True, "data": data.to_dict("records")})
@@ -415,7 +887,11 @@ def cmd_check(args):
     download_url = "https://www.futuhk.com/en/support/topic1_464"
     quote_ctx, trade_ctx = open_contexts(host, port, trd_market)
     try:
-        ret, data = quote_ctx.get_global_state()
+        handler = find_quote_handler(quote_ctx, ("get_global_state",))
+        if handler is None:
+            json_out({"ok": False, "error": "当前 futu-api 未提供全局状态接口"}, 1)
+        result = call_ctx_method(handler, [], [])
+        ret, data = result
         if ret != 0:
             json_out(
                 {
@@ -457,10 +933,18 @@ def cmd_funds(args):
     _, _, _, _, _, _, _, _ = load_futu()
     quote_ctx, trade_ctx = open_contexts(host, port, trd_market)
     try:
-        ret, data = trade_ctx.accinfo_query(
-            trd_env=trd_env,
-            refresh_cache=args.refresh_cache,
+        handler = find_trade_handler(trade_ctx, ("accinfo_query",))
+        if handler is None:
+            json_out({"ok": False, "error": "当前 futu-api 未提供资金查询接口"}, 1)
+        result = call_ctx_method(
+            handler,
+            [
+                (["trd_env"], trd_env),
+                (["refresh_cache"], args.refresh_cache),
+            ],
+            [trd_env, args.refresh_cache],
         )
+        ret, data = result
         if ret != 0:
             json_out({"ok": False, "error": str(data)}, 1)
         json_out({"ok": True, "data": data.to_dict("records")})
@@ -477,6 +961,50 @@ def build_parser():
 
     positions = sub.add_parser("positions")
     positions.set_defaults(func=cmd_positions)
+
+    historical_kline = sub.add_parser("historical-kline")
+    historical_kline.add_argument("--code", required=True)
+    historical_kline.add_argument("--start", required=True)
+    historical_kline.add_argument("--end", required=True)
+    historical_kline.add_argument("--max-count", default="1000")
+    historical_kline.add_argument("--ktype", default="DAY")
+    historical_kline.add_argument("--autype", default="QFQ")
+    historical_kline.add_argument("--page-req-key")
+    historical_kline.set_defaults(func=cmd_historical_kline)
+
+    financial_report = sub.add_parser("financial-report")
+    financial_report.add_argument("--code", required=True)
+    financial_report.add_argument("--start")
+    financial_report.add_argument("--end")
+    financial_report.set_defaults(func=cmd_financial_report)
+
+    financial_indicators = sub.add_parser("financial-indicators")
+    financial_indicators.add_argument("--code", required=True)
+    financial_indicators.add_argument("--period", default="QUARTER")
+    financial_indicators.add_argument("--start")
+    financial_indicators.add_argument("--end")
+    financial_indicators.set_defaults(func=cmd_financial_indicators)
+
+    financial_balance = sub.add_parser("financial-balance")
+    financial_balance.add_argument("--code", required=True)
+    financial_balance.add_argument("--period", default="QUARTER")
+    financial_balance.add_argument("--start")
+    financial_balance.add_argument("--end")
+    financial_balance.set_defaults(func=cmd_financial_balance)
+
+    financial_income = sub.add_parser("financial-income")
+    financial_income.add_argument("--code", required=True)
+    financial_income.add_argument("--period", default="QUARTER")
+    financial_income.add_argument("--start")
+    financial_income.add_argument("--end")
+    financial_income.set_defaults(func=cmd_financial_income)
+
+    financial_cashflow = sub.add_parser("financial-cashflow")
+    financial_cashflow.add_argument("--code", required=True)
+    financial_cashflow.add_argument("--period", default="QUARTER")
+    financial_cashflow.add_argument("--start")
+    financial_cashflow.add_argument("--end")
+    financial_cashflow.set_defaults(func=cmd_financial_cashflow)
 
     today_pnl = sub.add_parser("today-pnl")
     today_pnl.add_argument("--refresh-cache", action="store_true")

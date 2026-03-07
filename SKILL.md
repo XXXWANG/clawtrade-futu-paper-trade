@@ -56,6 +56,30 @@ FutuOpenD 下载与登录
   python3 {baseDir}/futu_skill.py cancel --order-id 8851102695472794941
 - 查询成交（默认当日）：
   python3 {baseDir}/futu_skill.py fills --days 1
+- 获取历史 K 线（日线）：
+  python3 {baseDir}/futu_skill.py historical-kline --code HK.00700 --start 2025-01-01 --end 2025-01-31 --ktype DAY
+- 获取历史 K 线（周线）：
+  python3 {baseDir}/futu_skill.py historical-kline --code HK.00700 --start 2024-01-01 --end 2025-01-31 --ktype WEEK
+- 获取历史 K 线（月线）：
+  python3 {baseDir}/futu_skill.py historical-kline --code HK.00700 --start 2020-01-01 --end 2025-01-31 --ktype MONTH
+- 获取历史 K 线（分钟线）：
+  python3 {baseDir}/futu_skill.py historical-kline --code HK.00700 --start 2025-01-01 --end 2025-01-02 --ktype 1M
+- 获取历史 K 线（分页）：
+  python3 {baseDir}/futu_skill.py historical-kline --code HK.00700 --start 2025-01-01 --end 2025-01-31 --ktype DAY --max-count 200 --page-req-key <page_req_key>
+- 查询财务报表：
+  python3 {baseDir}/futu_skill.py financial-report --code HK.00700 --start 2024-01-01 --end 2024-12-31
+- 查询财务指标（季度）：
+  python3 {baseDir}/futu_skill.py financial-indicators --code HK.00700 --period QUARTER
+- 查询财务指标（半年度）：
+  python3 {baseDir}/futu_skill.py financial-indicators --code HK.00700 --period HALF
+- 查询财务指标（年度）：
+  python3 {baseDir}/futu_skill.py financial-indicators --code HK.00700 --period YEAR
+- 查询资产负债表（季度）：
+  python3 {baseDir}/futu_skill.py financial-balance --code HK.00700 --period QUARTER
+- 查询利润表（半年度）：
+  python3 {baseDir}/futu_skill.py financial-income --code HK.00700 --period HALF
+- 查询现金流量表（年度）：
+  python3 {baseDir}/futu_skill.py financial-cashflow --code HK.00700 --period YEAR
 
 输出说明
 - 所有输出为 JSON
