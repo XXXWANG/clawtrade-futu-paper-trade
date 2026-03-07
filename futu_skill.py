@@ -201,6 +201,47 @@ def cmd_positions(args):
         close_contexts(quote_ctx, trade_ctx)
 
 
+def cmd_today_pnl(args):
+    host = get_env("FUTU_HOST", "127.0.0.1")
+    port = int(get_env("FUTU_PORT", "11111"))
+    trd_env = parse_trd_env(get_env("FUTU_TRD_ENV", "SIMULATE"))
+    trd_market = parse_trd_market(get_env("FUTU_TRD_MARKET", "HK"))
+    quote_ctx, trade_ctx = open_contexts(host, port, trd_market)
+    try:
+        ret, data = trade_ctx.position_list_query(
+            trd_env=trd_env,
+            position_market=trd_market,
+            refresh_cache=args.refresh_cache,
+        )
+        if ret != 0:
+            json_out({"ok": False, "error": str(data)}, 1)
+        records = data.to_dict("records")
+        total_today_pl = 0.0
+        total_market_val = 0.0
+        for row in records:
+            today_pl = row.get("today_pl_val")
+            market_val = row.get("market_val")
+            if today_pl is not None:
+                total_today_pl += float(today_pl)
+            if market_val is not None:
+                total_market_val += float(market_val)
+        today_pl_ratio = None
+        if total_market_val:
+            today_pl_ratio = total_today_pl / total_market_val
+        json_out(
+            {
+                "ok": True,
+                "data": {
+                    "today_pl_val": total_today_pl,
+                    "today_pl_ratio": today_pl_ratio,
+                    "positions": records,
+                },
+            }
+        )
+    finally:
+        close_contexts(quote_ctx, trade_ctx)
+
+
 def unlock_trade(trade_ctx):
     _, _, _, _, _, _, _, _ = load_futu()
     password = get_env("FUTU_TRADE_PWD", get_env("FUTU_PASSWORD", ""))
@@ -382,6 +423,25 @@ def cmd_check(args):
         close_contexts(quote_ctx, trade_ctx)
 
 
+def cmd_funds(args):
+    host = get_env("FUTU_HOST", "127.0.0.1")
+    port = int(get_env("FUTU_PORT", "11111"))
+    trd_env = parse_trd_env(get_env("FUTU_TRD_ENV", "SIMULATE"))
+    trd_market = parse_trd_market(get_env("FUTU_TRD_MARKET", "HK"))
+    _, _, _, _, _, _, _, _ = load_futu()
+    quote_ctx, trade_ctx = open_contexts(host, port, trd_market)
+    try:
+        ret, data = trade_ctx.accinfo_query(
+            trd_env=trd_env,
+            refresh_cache=args.refresh_cache,
+        )
+        if ret != 0:
+            json_out({"ok": False, "error": str(data)}, 1)
+        json_out({"ok": True, "data": data.to_dict("records")})
+    finally:
+        close_contexts(quote_ctx, trade_ctx)
+
+
 def build_parser():
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
@@ -391,6 +451,10 @@ def build_parser():
 
     positions = sub.add_parser("positions")
     positions.set_defaults(func=cmd_positions)
+
+    today_pnl = sub.add_parser("today-pnl")
+    today_pnl.add_argument("--refresh-cache", action="store_true")
+    today_pnl.set_defaults(func=cmd_today_pnl)
 
     buy = sub.add_parser("buy")
     buy.add_argument("--symbol", required=True)
@@ -427,6 +491,10 @@ def build_parser():
 
     check = sub.add_parser("check")
     check.set_defaults(func=cmd_check)
+
+    funds = sub.add_parser("funds")
+    funds.add_argument("--refresh-cache", action="store_true")
+    funds.set_defaults(func=cmd_funds)
     return parser
 
 

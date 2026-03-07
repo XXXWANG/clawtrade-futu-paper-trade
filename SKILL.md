@@ -38,10 +38,14 @@ FutuOpenD 下载与登录
 常用命令
 - 环境检查：
   python3 {baseDir}/futu_skill.py check
+- 查询账户资金与资产：
+  python3 {baseDir}/futu_skill.py funds
 - 查询实时行情：
   python3 {baseDir}/futu_skill.py quote --symbols HK.00700 HK.09988
 - 查询持仓：
   python3 {baseDir}/futu_skill.py positions
+- 查询今日盈亏：
+  python3 {baseDir}/futu_skill.py today-pnl
 - 下单买入：
   python3 {baseDir}/futu_skill.py buy --symbol HK.00700 --qty 100 --price 320.5
 - 下单卖出：
