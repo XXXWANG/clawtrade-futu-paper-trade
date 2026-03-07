@@ -81,9 +81,20 @@ def ensure_venv():
 
 
 def load_futu():
+    try:
+        from futu import OpenSecTradeContext
+    except Exception:
+        OpenSecTradeContext = None
+    try:
+        from futu import OpenTradeContext
+    except Exception:
+        OpenTradeContext = None
+    try:
+        from futu import OpenCNTradeContext
+    except Exception:
+        OpenCNTradeContext = None
     from futu import (
         OpenQuoteContext,
-        OpenTradeContext,
         TrdEnv,
         TrdMarket,
         TrdSide,
@@ -92,9 +103,17 @@ def load_futu():
         ModifyOrderOp,
     )
 
+    def create_trade_context(host, port, trd_market):
+        if OpenSecTradeContext is not None:
+            return OpenSecTradeContext(filter_trdmarket=trd_market, host=host, port=port)
+        trade_context = OpenTradeContext or OpenCNTradeContext
+        if trade_context is None:
+            json_out({"ok": False, "error": "未找到可用的交易上下文类"}, 1)
+        return trade_context(host=host, port=port)
+
     return (
         OpenQuoteContext,
-        OpenTradeContext,
+        create_trade_context,
         TrdEnv,
         TrdMarket,
         TrdSide,
@@ -138,10 +157,10 @@ def json_out(payload, exit_code=0):
     sys.exit(exit_code)
 
 
-def open_contexts(host, port):
-    OpenQuoteContext, OpenTradeContext, _, _, _, _, _, _ = load_futu()
+def open_contexts(host, port, trd_market):
+    OpenQuoteContext, create_trade_context, _, _, _, _, _, _ = load_futu()
     quote_ctx = OpenQuoteContext(host=host, port=port)
-    trade_ctx = OpenTradeContext(host=host, port=port)
+    trade_ctx = create_trade_context(host, port, trd_market)
     return quote_ctx, trade_ctx
 
 
@@ -155,8 +174,9 @@ def close_contexts(quote_ctx, trade_ctx):
 def cmd_quote(args):
     host = get_env("FUTU_HOST", "127.0.0.1")
     port = int(get_env("FUTU_PORT", "11111"))
+    trd_market = parse_trd_market(get_env("FUTU_TRD_MARKET", "HK"))
     symbols = args.symbols
-    quote_ctx, trade_ctx = open_contexts(host, port)
+    quote_ctx, trade_ctx = open_contexts(host, port, trd_market)
     try:
         ret, data = quote_ctx.get_stock_quote(symbols)
         if ret != 0:
@@ -171,9 +191,9 @@ def cmd_positions(args):
     port = int(get_env("FUTU_PORT", "11111"))
     trd_env = parse_trd_env(get_env("FUTU_TRD_ENV", "SIMULATE"))
     trd_market = parse_trd_market(get_env("FUTU_TRD_MARKET", "HK"))
-    quote_ctx, trade_ctx = open_contexts(host, port)
+    quote_ctx, trade_ctx = open_contexts(host, port, trd_market)
     try:
-        ret, data = trade_ctx.position_list(trd_env=trd_env, trd_market=trd_market)
+        ret, data = trade_ctx.position_list_query(trd_env=trd_env, position_market=trd_market)
         if ret != 0:
             json_out({"ok": False, "error": str(data)}, 1)
         json_out({"ok": True, "data": data.to_dict("records")})
@@ -201,7 +221,7 @@ def cmd_order(args, side):
     qty = int(args.qty)
     order_type = args.order_type.lower()
     _, _, _, _, TrdSide, OrderType, _, _ = load_futu()
-    quote_ctx, trade_ctx = open_contexts(host, port)
+    quote_ctx, trade_ctx = open_contexts(host, port, trd_market)
     try:
         unlock_trade(trade_ctx)
         if order_type == "market":
@@ -242,7 +262,7 @@ def cmd_orders(args):
     status_filter = parse_status_filter(args.status)
     if status_filter is None:
         json_out({"ok": False, "error": "无效的订单状态"}, 1)
-    quote_ctx, trade_ctx = open_contexts(host, port)
+    quote_ctx, trade_ctx = open_contexts(host, port, trd_market)
     try:
         ret, data = trade_ctx.order_list_query(
             order_id=args.order_id or "",
@@ -266,7 +286,8 @@ def cmd_cancel(args):
     port = int(get_env("FUTU_PORT", "11111"))
     trd_env = parse_trd_env(get_env("FUTU_TRD_ENV", "SIMULATE"))
     _, _, _, _, _, _, _, ModifyOrderOp = load_futu()
-    quote_ctx, trade_ctx = open_contexts(host, port)
+    trd_market = parse_trd_market(get_env("FUTU_TRD_MARKET", "HK"))
+    quote_ctx, trade_ctx = open_contexts(host, port, trd_market)
     try:
         unlock_trade(trade_ctx)
         ret, data = trade_ctx.modify_order(
@@ -290,7 +311,7 @@ def cmd_fills(args):
     trd_market = parse_trd_market(get_env("FUTU_TRD_MARKET", "HK"))
     days = int(args.days)
     _, _, TrdEnv, _, _, _, _, _ = load_futu()
-    quote_ctx, trade_ctx = open_contexts(host, port)
+    quote_ctx, trade_ctx = open_contexts(host, port, trd_market)
     try:
         if days <= 1:
             ret, data = trade_ctx.deal_list_query(
@@ -323,8 +344,9 @@ def cmd_fills(args):
 def cmd_check(args):
     host = get_env("FUTU_HOST", "127.0.0.1")
     port = int(get_env("FUTU_PORT", "11111"))
+    trd_market = parse_trd_market(get_env("FUTU_TRD_MARKET", "HK"))
     download_url = "https://www.futuhk.com/en/support/topic1_464"
-    quote_ctx, trade_ctx = open_contexts(host, port)
+    quote_ctx, trade_ctx = open_contexts(host, port, trd_market)
     try:
         ret, data = quote_ctx.get_global_state()
         if ret != 0:
