@@ -208,6 +208,22 @@ def cmd_today_pnl(args):
     trd_market = parse_trd_market(get_env("FUTU_TRD_MARKET", "HK"))
     quote_ctx, trade_ctx = open_contexts(host, port, trd_market)
     try:
+        def parse_number(value):
+            if value is None:
+                return None
+            if isinstance(value, str):
+                stripped = value.strip()
+                if stripped == "" or stripped.upper() == "N/A":
+                    return None
+                try:
+                    return float(stripped)
+                except ValueError:
+                    return None
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return None
+
         ret, data = trade_ctx.position_list_query(
             trd_env=trd_env,
             position_market=trd_market,
@@ -219,12 +235,12 @@ def cmd_today_pnl(args):
         total_today_pl = 0.0
         total_market_val = 0.0
         for row in records:
-            today_pl = row.get("today_pl_val")
-            market_val = row.get("market_val")
+            today_pl = parse_number(row.get("today_pl_val"))
+            market_val = parse_number(row.get("market_val"))
             if today_pl is not None:
-                total_today_pl += float(today_pl)
+                total_today_pl += today_pl
             if market_val is not None:
-                total_market_val += float(market_val)
+                total_market_val += market_val
         today_pl_ratio = None
         if total_market_val:
             today_pl_ratio = total_today_pl / total_market_val
