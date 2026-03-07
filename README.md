@@ -1,11 +1,11 @@
 # 🦎 XTrade Futu Paper Trade
 
-> 让 AI 学会炒港股 - 实时行情 + 模拟交易
+> 让 OpenClaw 学会炒港股 - 实时行情 + 模拟交易
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![Python: 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
 
-**一句话概括：给 AI 一个港股账户，让它能看行情、管仓位、下模拟单。**
+**一句话概括：给OpenClaw一个港股账户，让它能看行情、管仓位、下模拟单。**
 
 ---
 
