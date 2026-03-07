@@ -310,9 +310,214 @@ def build_financial_params(handler, args, extra_params):
     return signature, params
 
 
-def call_financial_api(quote_ctx, handler_names, args, extra_params, error_message):
+def load_akshare():
+    try:
+        import akshare as ak
+    except Exception:
+        json_out(
+            {
+                "ok": False,
+                "error": "AkShare 未安装或导入失败",
+                "next_steps": [
+                    "请确认已安装 akshare 依赖",
+                    "重新运行本技能",
+                ],
+            },
+            1,
+        )
+    return ak
+
+
+def normalize_akshare_code(code):
+    if not code:
+        return None
+    lower = code.lower()
+    if lower.startswith(("sh", "sz")) and len(lower) > 2:
+        return lower
+    if "." in code:
+        market, symbol = code.split(".", 1)
+        market = market.strip().upper()
+        symbol = symbol.strip()
+        if market in {"SH", "SZ"} and symbol:
+            return f"{market.lower()}{symbol}"
+        return None
+    prefix = code[:2].upper()
+    symbol = code[2:]
+    if prefix in {"SH", "SZ"} and symbol:
+        return f"{prefix.lower()}{symbol}"
+    return None
+
+
+def normalize_akshare_hk_code(code):
+    if not code:
+        return None
+    if "." in code:
+        market, symbol = code.split(".", 1)
+        market = market.strip().upper()
+        symbol = symbol.strip()
+        if market == "HK" and symbol:
+            return symbol
+        return None
+    lower = code.lower()
+    if lower.startswith("hk") and len(code) > 2:
+        return code[2:].strip()
+    return None
+
+
+def normalize_akshare_market_code(code):
+    ak_code = normalize_akshare_code(code)
+    if ak_code:
+        return "A", ak_code
+    hk_code = normalize_akshare_hk_code(code)
+    if hk_code:
+        return "HK", hk_code
+    return None
+
+
+def resolve_akshare_market_code(code):
+    result = normalize_akshare_market_code(code)
+    if not result:
+        json_out(
+            {
+                "ok": False,
+                "error": "AkShare 仅支持 A 股与港股财务数据",
+                "next_steps": [
+                    "请使用 SH./SZ. 或 HK. 股票代码",
+                    "其他市场请改用支持的官方接口",
+                ],
+            },
+            1,
+        )
+    return result
+
+
+def find_akshare_handler(ak, names):
+    for name in names:
+        if hasattr(ak, name):
+            return getattr(ak, name)
+    return None
+
+
+def call_akshare_method(handler, args_map, fallback_args):
+    signature = inspect.signature(handler)
+    params = {}
+    if signature and signature.parameters:
+        for names, value in args_map:
+            for name in names:
+                if name in signature.parameters:
+                    params[name] = value
+                    break
+    if params:
+        return handler(**params)
+    return handler(*fallback_args)
+
+
+def filter_df_by_date(df, start, end):
+    if df is None or (not start and not end):
+        return df
+    if not hasattr(df, "columns"):
+        return df
+    date_col = None
+    for candidate in ("报告日期", "报告期", "报告时间", "日期", "截止日期", "截止日"):
+        if candidate in df.columns:
+            date_col = candidate
+            break
+    if not date_col:
+        return df
+    try:
+        import pandas as pd
+    except Exception:
+        return df
+    series_dt = pd.to_datetime(df[date_col], errors="coerce")
+    if series_dt.isna().all():
+        return df
+    mask = pd.Series([True] * len(df))
+    if start:
+        start_dt = pd.to_datetime(start, errors="coerce")
+        if not pd.isna(start_dt):
+            mask &= series_dt >= start_dt
+    if end:
+        end_dt = pd.to_datetime(end, errors="coerce")
+        if not pd.isna(end_dt):
+            mask &= series_dt <= end_dt
+    return df[mask]
+
+
+def akshare_financial_statement(code, statement, start, end):
+    ak = load_akshare()
+    try:
+        market, ak_code = resolve_akshare_market_code(code)
+        if market == "A":
+            handler = find_akshare_handler(ak, ("stock_financial_report_sina",))
+            if handler is None:
+                json_out({"ok": False, "error": "AkShare 未提供 A 股财务报表接口"}, 1)
+            df = call_akshare_method(
+                handler,
+                [(["stock", "symbol", "code"], ak_code), (["symbol", "type", "report_type"], statement)],
+                [ak_code, statement],
+            )
+        else:
+            handler = find_akshare_handler(ak, ("stock_financial_hk_report_em", "stock_hk_financial_report_em"))
+            if handler is None:
+                json_out(
+                    {
+                        "ok": False,
+                        "error": "AkShare 未提供港股财务报表接口",
+                        "next_steps": [
+                            "请升级 akshare 版本",
+                            "可尝试 financial-indicators 获取港股指标",
+                        ],
+                    },
+                    1,
+                )
+            df = call_akshare_method(
+                handler,
+                [
+                    (["symbol", "stock", "code"], ak_code),
+                    (["report_type", "type", "statement_type", "sheet_type", "statement"], statement),
+                ],
+                [ak_code],
+            )
+    except Exception as exc:
+        json_out({"ok": False, "error": f"AkShare 财务报表获取失败: {exc}"}, 1)
+    return filter_df_by_date(df, start, end)
+
+
+def akshare_financial_report_bundle(code, start, end):
+    balance = akshare_financial_statement(code, "资产负债表", start, end)
+    income = akshare_financial_statement(code, "利润表", start, end)
+    cashflow = akshare_financial_statement(code, "现金流量表", start, end)
+    return {
+        "balance_sheet": balance.to_dict("records") if hasattr(balance, "to_dict") else balance,
+        "income_statement": income.to_dict("records") if hasattr(income, "to_dict") else income,
+        "cash_flow_statement": cashflow.to_dict("records") if hasattr(cashflow, "to_dict") else cashflow,
+    }
+
+
+def akshare_financial_indicators(code, start, end):
+    ak = load_akshare()
+    try:
+        market, ak_code = resolve_akshare_market_code(code)
+        if market == "A":
+            handler = find_akshare_handler(ak, ("stock_financial_abstract",))
+            if handler is None:
+                json_out({"ok": False, "error": "AkShare 未提供 A 股财务指标接口"}, 1)
+            df = call_akshare_method(handler, [(["stock", "symbol", "code"], ak_code)], [ak_code])
+        else:
+            handler = find_akshare_handler(ak, ("stock_hk_financial_indicator_em",))
+            if handler is None:
+                json_out({"ok": False, "error": "AkShare 未提供港股财务指标接口"}, 1)
+            df = call_akshare_method(handler, [(["symbol", "stock", "code"], ak_code)], [ak_code])
+    except Exception as exc:
+        json_out({"ok": False, "error": f"AkShare 财务指标获取失败: {exc}"}, 1)
+    return filter_df_by_date(df, start, end)
+
+
+def call_financial_api(quote_ctx, handler_names, args, extra_params, error_message, fallback=None):
     handler = find_quote_handler(quote_ctx, handler_names)
     if handler is None:
+        if fallback:
+            return fallback()
         json_out(
             {
                 "ok": False,
@@ -474,12 +679,29 @@ def cmd_financial_report(args):
     trd_market = parse_trd_market(get_env("FUTU_TRD_MARKET", "HK"))
     quote_ctx, trade_ctx = open_contexts(host, port, trd_market)
     try:
+        def fallback():
+            if normalize_akshare_market_code(args.code):
+                payload = akshare_financial_report_bundle(args.code, args.start, args.end)
+                json_out({"ok": True, "data": payload})
+            json_out(
+                {
+                    "ok": False,
+                    "error": "当前 futu-api 未提供财务报表接口",
+                    "next_steps": [
+                        "仅 A 股/港股可回退 AkShare",
+                        "请使用 SH./SZ. 或 HK. 股票代码",
+                    ],
+                },
+                1,
+            )
+
         call_financial_api(
             quote_ctx,
             ("get_financial_report", "request_financial_report"),
             args,
             {"period": None, "report_type": None, "statement_type": None},
             "当前 futu-api 未提供财务报表接口",
+            fallback=fallback,
         )
     finally:
         close_contexts(quote_ctx, trade_ctx)
@@ -541,6 +763,23 @@ def cmd_financial_indicators(args):
     trd_market = parse_trd_market(get_env("FUTU_TRD_MARKET", "HK"))
     quote_ctx, trade_ctx = open_contexts(host, port, trd_market)
     try:
+        def fallback():
+            if normalize_akshare_market_code(args.code):
+                df = akshare_financial_indicators(args.code, args.start, args.end)
+                payload = df.to_dict("records") if hasattr(df, "to_dict") else df
+                json_out({"ok": True, "data": payload})
+            json_out(
+                {
+                    "ok": False,
+                    "error": "当前 futu-api 未提供财务指标接口",
+                    "next_steps": [
+                        "仅 A 股/港股可回退 AkShare",
+                        "请使用 SH./SZ. 或 HK. 股票代码",
+                    ],
+                },
+                1,
+            )
+
         period_value = resolve_period_value(args.period)
         report_type_value = resolve_indicator_value()
         call_financial_api(
@@ -549,6 +788,7 @@ def cmd_financial_indicators(args):
             args,
             {"period": period_value, "report_type": report_type_value, "statement_type": None},
             "当前 futu-api 未提供财务指标接口",
+            fallback=fallback,
         )
     finally:
         close_contexts(quote_ctx, trade_ctx)
@@ -560,6 +800,23 @@ def cmd_financial_balance(args):
     trd_market = parse_trd_market(get_env("FUTU_TRD_MARKET", "HK"))
     quote_ctx, trade_ctx = open_contexts(host, port, trd_market)
     try:
+        def fallback():
+            if normalize_akshare_market_code(args.code):
+                df = akshare_financial_statement(args.code, "资产负债表", args.start, args.end)
+                payload = df.to_dict("records") if hasattr(df, "to_dict") else df
+                json_out({"ok": True, "data": payload})
+            json_out(
+                {
+                    "ok": False,
+                    "error": "当前 futu-api 未提供资产负债表接口",
+                    "next_steps": [
+                        "仅 A 股/港股可回退 AkShare",
+                        "请使用 SH./SZ. 或 HK. 股票代码",
+                    ],
+                },
+                1,
+            )
+
         period_value = resolve_period_value(args.period)
         statement_value = resolve_statement_value("BALANCE")
         call_financial_api(
@@ -568,6 +825,7 @@ def cmd_financial_balance(args):
             args,
             {"period": period_value, "report_type": statement_value, "statement_type": statement_value},
             "当前 futu-api 未提供资产负债表接口",
+            fallback=fallback,
         )
     finally:
         close_contexts(quote_ctx, trade_ctx)
@@ -579,6 +837,23 @@ def cmd_financial_income(args):
     trd_market = parse_trd_market(get_env("FUTU_TRD_MARKET", "HK"))
     quote_ctx, trade_ctx = open_contexts(host, port, trd_market)
     try:
+        def fallback():
+            if normalize_akshare_market_code(args.code):
+                df = akshare_financial_statement(args.code, "利润表", args.start, args.end)
+                payload = df.to_dict("records") if hasattr(df, "to_dict") else df
+                json_out({"ok": True, "data": payload})
+            json_out(
+                {
+                    "ok": False,
+                    "error": "当前 futu-api 未提供利润表接口",
+                    "next_steps": [
+                        "仅 A 股/港股可回退 AkShare",
+                        "请使用 SH./SZ. 或 HK. 股票代码",
+                    ],
+                },
+                1,
+            )
+
         period_value = resolve_period_value(args.period)
         statement_value = resolve_statement_value("INCOME")
         call_financial_api(
@@ -587,6 +862,7 @@ def cmd_financial_income(args):
             args,
             {"period": period_value, "report_type": statement_value, "statement_type": statement_value},
             "当前 futu-api 未提供利润表接口",
+            fallback=fallback,
         )
     finally:
         close_contexts(quote_ctx, trade_ctx)
@@ -598,6 +874,23 @@ def cmd_financial_cashflow(args):
     trd_market = parse_trd_market(get_env("FUTU_TRD_MARKET", "HK"))
     quote_ctx, trade_ctx = open_contexts(host, port, trd_market)
     try:
+        def fallback():
+            if normalize_akshare_market_code(args.code):
+                df = akshare_financial_statement(args.code, "现金流量表", args.start, args.end)
+                payload = df.to_dict("records") if hasattr(df, "to_dict") else df
+                json_out({"ok": True, "data": payload})
+            json_out(
+                {
+                    "ok": False,
+                    "error": "当前 futu-api 未提供现金流量表接口",
+                    "next_steps": [
+                        "仅 A 股/港股可回退 AkShare",
+                        "请使用 SH./SZ. 或 HK. 股票代码",
+                    ],
+                },
+                1,
+            )
+
         period_value = resolve_period_value(args.period)
         statement_value = resolve_statement_value("CASHFLOW")
         call_financial_api(
@@ -606,6 +899,7 @@ def cmd_financial_cashflow(args):
             args,
             {"period": period_value, "report_type": statement_value, "statement_type": statement_value},
             "当前 futu-api 未提供现金流量表接口",
+            fallback=fallback,
         )
     finally:
         close_contexts(quote_ctx, trade_ctx)

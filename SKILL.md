@@ -67,19 +67,25 @@ FutuOpenD 下载与登录
 - 获取历史 K 线（分页）：
   python3 {baseDir}/futu_skill.py historical-kline --code HK.00700 --start 2025-01-01 --end 2025-01-31 --ktype DAY --max-count 200 --page-req-key <page_req_key>
 - 查询财务报表：
-  python3 {baseDir}/futu_skill.py financial-report --code HK.00700 --start 2024-01-01 --end 2024-12-31
+  python3 {baseDir}/futu_skill.py financial-report --code SH.600519 --start 2024-01-01 --end 2024-12-31
 - 查询财务指标（季度）：
-  python3 {baseDir}/futu_skill.py financial-indicators --code HK.00700 --period QUARTER
+  python3 {baseDir}/futu_skill.py financial-indicators --code SH.600519 --period QUARTER
 - 查询财务指标（半年度）：
-  python3 {baseDir}/futu_skill.py financial-indicators --code HK.00700 --period HALF
+  python3 {baseDir}/futu_skill.py financial-indicators --code SH.600519 --period HALF
 - 查询财务指标（年度）：
-  python3 {baseDir}/futu_skill.py financial-indicators --code HK.00700 --period YEAR
+  python3 {baseDir}/futu_skill.py financial-indicators --code SH.600519 --period YEAR
 - 查询资产负债表（季度）：
-  python3 {baseDir}/futu_skill.py financial-balance --code HK.00700 --period QUARTER
+  python3 {baseDir}/futu_skill.py financial-balance --code SH.600519 --period QUARTER
 - 查询利润表（半年度）：
-  python3 {baseDir}/futu_skill.py financial-income --code HK.00700 --period HALF
+  python3 {baseDir}/futu_skill.py financial-income --code SH.600519 --period HALF
 - 查询现金流量表（年度）：
-  python3 {baseDir}/futu_skill.py financial-cashflow --code HK.00700 --period YEAR
+  python3 {baseDir}/futu_skill.py financial-cashflow --code SH.600519 --period YEAR
+
+替代接口说明
+- financial-report、financial-indicators、financial-balance、financial-income、financial-cashflow 默认优先使用 futu-api
+- 当 futu-api 缺失相关接口时，A 股与港股回退 AkShare
+- A 股财务报表来自新浪财经（SH./SZ.）
+- 港股财务指标来自东方财富，港股财务报表依赖 AkShare 港股接口支持
 
 输出说明
 - 所有输出为 JSON
