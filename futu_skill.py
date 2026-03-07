@@ -143,14 +143,15 @@ def parse_trd_env(trd_env):
 
 def parse_trd_market(trd_market):
     _, _, _, TrdMarket, _, _, _, _ = load_futu()
+    default_market = TrdMarket.HK
     mapping = {
-        "HK": TrdMarket.HK,
-        "US": TrdMarket.US,
-        "CN": TrdMarket.CN,
-        "HKCC": TrdMarket.HKCC,
-        "USCC": TrdMarket.USCC,
+        "HK": getattr(TrdMarket, "HK", default_market),
+        "US": getattr(TrdMarket, "US", default_market),
+        "CN": getattr(TrdMarket, "CN", default_market),
+        "HKCC": getattr(TrdMarket, "HKCC", default_market),
+        "USCC": getattr(TrdMarket, "USCC", default_market),
     }
-    return mapping.get(trd_market.upper(), TrdMarket.HK)
+    return mapping.get(trd_market.upper(), default_market)
 
 
 def json_out(payload, exit_code=0):
@@ -582,7 +583,8 @@ def cmd_quote(args):
         ret, data = result
         if ret != 0:
             json_out({"ok": False, "error": str(data)}, 1)
-        json_out({"ok": True, "data": data.to_dict("records")})
+        payload = data.to_dict("records") if hasattr(data, "to_dict") else data
+        json_out({"ok": True, "data": payload})
     finally:
         close_contexts(quote_ctx, trade_ctx)
 
@@ -608,7 +610,8 @@ def cmd_positions(args):
         ret, data = result
         if ret != 0:
             json_out({"ok": False, "error": str(data)}, 1)
-        json_out({"ok": True, "data": data.to_dict("records")})
+        payload = data.to_dict("records") if hasattr(data, "to_dict") else data
+        json_out({"ok": True, "data": payload})
     finally:
         close_contexts(quote_ctx, trade_ctx)
 
@@ -1200,7 +1203,8 @@ def cmd_check(args):
                 },
                 1,
             )
-        json_out({"ok": True, "data": data.to_dict("records")})
+        payload = data.to_dict("records") if hasattr(data, "to_dict") else data
+        json_out({"ok": True, "data": payload})
     except Exception as exc:
         json_out(
             {
