@@ -178,6 +178,16 @@ def cmd_quote(args):
     symbols = args.symbols
     quote_ctx, trade_ctx = open_contexts(host, port, trd_market)
     try:
+        from futu import SubType
+
+        ret, data = quote_ctx.subscribe(
+            symbols,
+            [SubType.QUOTE],
+            is_first_push=False,
+            subscribe_push=False,
+        )
+        if ret != 0:
+            json_out({"ok": False, "error": str(data)}, 1)
         ret, data = quote_ctx.get_stock_quote(symbols)
         if ret != 0:
             json_out({"ok": False, "error": str(data)}, 1)
