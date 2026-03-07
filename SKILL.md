@@ -14,6 +14,7 @@ metadata: {"openclaw":{"requires":{"bins":["python3"]},"os":["darwin","linux","w
 自动安装与引导
 - 本技能会自动创建虚拟环境并安装 Python 依赖
 - 若系统缺少 python3，请先安装后再重试
+- 自动选择兼容 futu-api 的 Python 3.10/3.11/3.12 并重建虚拟环境
 - FutuOpenD 属于官方程序，无法由技能自动下载安装
 - 可使用 check 指令自动检测并给出引导步骤
 - 完成后仅需设置 FUTU_TRADE_PWD 即可交易

@@ -1,9 +1,56 @@
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+
+def get_python_version(python_cmd):
+    try:
+        output = subprocess.check_output(
+            [python_cmd, "-c", "import sys; print(f'{sys.version_info[0]}.{sys.version_info[1]}')"],
+            text=True,
+        ).strip()
+    except Exception:
+        return None
+    parts = output.split(".")
+    if len(parts) < 2:
+        return None
+    try:
+        return int(parts[0]), int(parts[1])
+    except ValueError:
+        return None
+
+
+def is_compatible_python(version_tuple):
+    if not version_tuple:
+        return False
+    major, minor = version_tuple
+    return major == 3 and minor in {10, 11, 12}
+
+
+def select_python():
+    current = (sys.version_info[0], sys.version_info[1])
+    if is_compatible_python(current):
+        return sys.executable
+    candidates = ["python3.12", "python3.11", "python3.10", "python3", "python"]
+    for candidate in candidates:
+        version = get_python_version(candidate)
+        if is_compatible_python(version):
+            return candidate
+    json_out(
+        {
+            "ok": False,
+            "error": "未找到兼容 futu-api 的 Python 版本",
+            "next_steps": [
+                "请安装 Python 3.10/3.11/3.12",
+                "安装后重新运行本技能",
+            ],
+        },
+        1,
+    )
 
 
 def ensure_venv():
@@ -16,8 +63,13 @@ def ensure_venv():
     if sys.platform.startswith("win"):
         python_path = venv_dir / "Scripts" / "python.exe"
         pip_path = venv_dir / "Scripts" / "pip.exe"
+    python_cmd = select_python()
+    if python_path.exists():
+        venv_version = get_python_version(str(python_path))
+        if not is_compatible_python(venv_version):
+            shutil.rmtree(venv_dir, ignore_errors=True)
     if not python_path.exists():
-        subprocess.check_call([sys.executable, "-m", "venv", str(venv_dir)])
+        subprocess.check_call([python_cmd, "-m", "venv", str(venv_dir)])
     if not pip_path.exists():
         raise RuntimeError("虚拟环境创建失败")
     requirements = base_dir / "requirements.txt"
