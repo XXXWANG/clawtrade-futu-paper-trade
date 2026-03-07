@@ -148,7 +148,7 @@ def parse_trd_market(trd_market):
         "US": TrdMarket.US,
         "CN": TrdMarket.CN,
         "HKCC": TrdMarket.HKCC,
-        "USCC": TrdMarket.USCC,
+        # USCC removed in newer futu-api
     }
     return mapping.get(trd_market.upper(), TrdMarket.HK)
 
@@ -614,6 +614,19 @@ def cmd_positions(args):
 
 
 def cmd_historical_kline(args):
+    # 自动转换日期格式为 YYYY-MM-DD
+    import re
+    def normalize_date(date_str):
+        if not date_str:
+            return date_str
+        # 尝试转换 YYYYMMDD -> YYYY-MM-DD
+        if re.match(r'^\d{8}$', date_str):
+            return f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
+        return date_str
+    
+    args.start = normalize_date(args.start)
+    args.end = normalize_date(args.end)
+    
     host = get_env("FUTU_HOST", "127.0.0.1")
     port = int(get_env("FUTU_PORT", "11111"))
     trd_market = parse_trd_market(get_env("FUTU_TRD_MARKET", "HK"))
