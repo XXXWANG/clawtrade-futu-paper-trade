@@ -1,5 +1,5 @@
 ---
-name: futu-paper-trade
+name: clawtrade-futu-paper-trade
 description: 使用富途纸面交易API查询行情、持仓并下单
 metadata: {"openclaw":{"requires":{"bins":["python3"]},"os":["darwin","linux","win32"]}}
 ---
