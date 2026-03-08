@@ -1,4 +1,4 @@
-# 🐉 ClawTrade 富途纸面交易
+# 🐉 clawtrade-futu-paper-trade 富途实时纸面交易工具
 
 ![ClawTrade Logo](./ClawTrade%20Logo.png)
 
