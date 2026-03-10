@@ -65,6 +65,8 @@ FutuOpenD 下载与登录
   python3 {baseDir}/clawtrade_futu_skill.py historical-kline --code HK.00700 --start 2025-01-01 --end 2025-01-02 --ktype 1M
 - 获取历史 K 线（分页）：
   python3 {baseDir}/clawtrade_futu_skill.py historical-kline --code HK.00700 --start 2025-01-01 --end 2025-01-31 --ktype DAY --max-count 200 --page-req-key <page_req_key>
+- 分页说明：
+  将上一页返回的 page_req_key 原样传回；若返回值带有 b64: 前缀，不要修改其内容
 - 查询财务报表：
   python3 {baseDir}/clawtrade_futu_skill.py financial-report --code SH.600519 --start 2024-01-01 --end 2024-12-31
 - 查询财务指标（季度）：

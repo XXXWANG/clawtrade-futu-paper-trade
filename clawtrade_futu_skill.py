@@ -1,4 +1,5 @@
 import argparse
+import base64
 import inspect
 import json
 import logging
@@ -263,6 +264,54 @@ def parse_non_negative_float(value, field_name):
 def json_out(payload, exit_code=0):
     print(json.dumps(payload, ensure_ascii=False))
     sys.exit(exit_code)
+
+
+def encode_page_req_key(page_req_key):
+    if page_req_key is None:
+        return None
+    if isinstance(page_req_key, str):
+        return page_req_key
+    if isinstance(page_req_key, (bytes, bytearray, memoryview)):
+        raw = bytes(page_req_key)
+        return "b64:" + base64.urlsafe_b64encode(raw).decode("ascii")
+    try:
+        json.dumps(page_req_key, ensure_ascii=False)
+        return page_req_key
+    except TypeError:
+        json_out(
+            {
+                "ok": False,
+                "error": f"历史 K 线分页游标类型不受支持: {type(page_req_key).__name__}",
+                "next_steps": [
+                    "请升级本技能或 futu-api 版本",
+                    "如需兼容新的 page_req_key 类型，请补充分页游标编码规则",
+                ],
+            },
+            1,
+        )
+
+
+def decode_page_req_key(page_req_key):
+    if not page_req_key:
+        return None
+    if not isinstance(page_req_key, str):
+        return page_req_key
+    if not page_req_key.startswith("b64:"):
+        return page_req_key
+    try:
+        return base64.urlsafe_b64decode(page_req_key[4:].encode("ascii"))
+    except Exception:
+        json_out(
+            {
+                "ok": False,
+                "error": "page_req_key 不是有效的 base64 分页游标",
+                "next_steps": [
+                    "请直接使用上一页返回的 page_req_key 原样重试",
+                    "不要手动修改 b64: 前缀或内容",
+                ],
+            },
+            1,
+        )
 
 
 def open_contexts(host, port, trd_market):
@@ -762,6 +811,7 @@ def cmd_historical_kline(args):
     host = get_env("FUTU_HOST", "127.0.0.1")
     port = get_port()
     trd_market = parse_trd_market(get_env("FUTU_TRD_MARKET", "HK"))
+    page_req_key = decode_page_req_key(args.page_req_key)
     quote_ctx, trade_ctx = open_contexts(host, port, trd_market)
     try:
         from futu import KLType, AuType
@@ -795,7 +845,7 @@ def cmd_historical_kline(args):
                 (["ktype", "kl_type", "k_type"], ktype),
                 (["autype", "au_type", "rehab_type"], getattr(AuType, autype_name)),
                 (["max_count", "count"], int(args.max_count)),
-                (["page_req_key"], args.page_req_key or None),
+                (["page_req_key"], page_req_key),
             ],
             [
                 args.code,
@@ -804,16 +854,16 @@ def cmd_historical_kline(args):
                 ktype,
                 getattr(AuType, autype_name),
                 int(args.max_count),
-                args.page_req_key or None,
+                page_req_key,
             ],
         )
         if not isinstance(result, tuple) or len(result) < 2:
             json_out({"ok": False, "error": "历史 K 线接口返回格式不符合预期"}, 1)
         ret, data = result[0], result[1]
-        page_req_key = result[2] if len(result) > 2 else None
+        next_page_req_key = encode_page_req_key(result[2] if len(result) > 2 else None)
         if ret != 0:
             json_out({"ok": False, "error": str(data)}, 1)
-        json_out({"ok": True, "data": data.to_dict("records"), "page_req_key": page_req_key})
+        json_out({"ok": True, "data": data.to_dict("records"), "page_req_key": next_page_req_key})
     finally:
         close_contexts(quote_ctx, trade_ctx)
 
