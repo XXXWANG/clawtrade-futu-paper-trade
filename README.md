@@ -43,14 +43,14 @@ git clone https://github.com/XXXWANG/clawtrade-futu-paper-trade.git
 # 下载: https://www.futuhk.com/en/support/topic1_464
 
 # 3. 查询行情
-python futu_skill.py quote --symbols HK.00700 HK.01810
+python clawtrade_futu_skill.py quote --symbols HK.00700 HK.01810
 
 # 4. 查看账户
-python futu_skill.py funds
-python futu_skill.py positions
+python clawtrade_futu_skill.py funds
+python clawtrade_futu_skill.py positions
 
 # 5. 模拟买入
-python futu_skill.py buy --symbol HK.00700 --qty 100 --price 520
+python clawtrade_futu_skill.py buy --symbol HK.00700 --qty 100 --price 520
 ```
 
 ---
@@ -60,14 +60,14 @@ python futu_skill.py buy --symbol HK.00700 --qty 100 --price 520
 | 功能 | 命令 |
 |------|------|
 | 行情查询 | `quote --symbols HK.00700` |
-| K线数据 | `kline --symbol HK.00700 --day 30` |
+| K线数据 | `historical-kline --code HK.00700 --start 2025-01-01 --end 2025-01-31 --ktype DAY` |
 | 账户资金 | `funds` |
 | 当前持仓 | `positions` |
 | 今日盈亏 | `today-pnl` |
 | 买入下单 | `buy --symbol HK.00700 --qty 100 --price 520` |
 | 卖出下单 | `sell --symbol HK.00700 --qty 50 --price 530` |
 | 财务指标 | `financial-indicators --code HK.00700` |
-| 撤销订单 | `cancel --order_id 123456` |
+| 撤销订单 | `cancel --order-id 123456` |
 
 ---
 
