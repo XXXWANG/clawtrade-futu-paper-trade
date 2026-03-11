@@ -17,7 +17,7 @@ metadata: {"openclaw":{"requires":{"bins":["python3"]},"os":["darwin","linux","w
 - 自动选择兼容 futu-api 的 Python 3.10/3.11/3.12 并重建虚拟环境
 - FutuOpenD 属于官方程序，无法由技能自动下载安装
 - 可使用 check 指令自动检测并给出引导步骤
-- 完成后仅需设置 FUTU_TRADE_PWD 即可交易
+- 模拟交易通常不需要设置 FUTU_TRADE_PWD
 - 安全限制：仅允许纸面交易，检测到 REAL 会拒绝执行
 
 FutuOpenD 下载与登录
@@ -31,7 +31,7 @@ FutuOpenD 下载与登录
 - FUTU_PORT：FutuOpenD 端口，默认 11111
 - FUTU_TRD_ENV：交易环境，仅支持 PAPER（或 SIMULATE）
 - FUTU_TRD_MARKET：交易市场，默认 HK
-- FUTU_TRADE_PWD：交易解锁密码
+- FUTU_TRADE_PWD：交易解锁密码，可选；模拟交易通常不需要
 - FUTU_ACCOUNT：账号标识，可选
 
 常用命令

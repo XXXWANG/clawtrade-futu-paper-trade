@@ -1165,8 +1165,10 @@ def cmd_today_pnl(args):
         close_contexts(quote_ctx, trade_ctx)
 
 
-def unlock_trade(trade_ctx):
-    _, _, _, _, _, _, _, _ = load_futu()
+def unlock_trade(trade_ctx, trd_env):
+    _, _, TrdEnv, _, _, _, _, _ = load_futu()
+    if trd_env == TrdEnv.SIMULATE:
+        return
     password = get_env("FUTU_TRADE_PWD", "")
     if not password:
         json_out(
@@ -1212,7 +1214,7 @@ def cmd_order(args, side):
     _, _, _, _, TrdSide, OrderType, _, _ = load_futu()
     quote_ctx, trade_ctx = open_contexts(host, port, trd_market)
     try:
-        unlock_trade(trade_ctx)
+        unlock_trade(trade_ctx, trd_env)
         if order_type == "market":
             order_type_value = OrderType.MARKET
         else:
@@ -1303,7 +1305,7 @@ def cmd_cancel(args):
     trd_market = parse_trd_market(get_env("FUTU_TRD_MARKET", "HK"))
     quote_ctx, trade_ctx = open_contexts(host, port, trd_market)
     try:
-        unlock_trade(trade_ctx)
+        unlock_trade(trade_ctx, trd_env)
         handler = find_trade_handler(trade_ctx, ("modify_order",))
         if handler is None:
             json_out({"ok": False, "error": "当前 futu-api 未提供改撤单接口"}, 1)
